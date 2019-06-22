@@ -641,7 +641,14 @@ static int stm32x_get_device_id(struct flash_bank *bank, uint32_t *idcode)
 		dbgmcu_base = 0x40015800;
 		break;
 	case 0xC23:	/* Cortex-M3 */
+		dbgmcu_base = 0xE0042000;
+                break;
 	case 0xC24:	/* Cortex-M4 */
+		dbgmcu_base = 0xE0042000;
+                break;
+	case 0xD20:     /* GD32F3x0 line */
+		dbgmcu_base = 0x40015800;
+                break;
 	case 0xC27:	/* Cortex-M7 */
 	default:
 		dbgmcu_base = 0xE0042000;
@@ -659,12 +666,22 @@ static int stm32x_get_device_id(struct flash_bank *bank, uint32_t *idcode)
 static int stm32x_get_flash_size(struct flash_bank *bank, uint16_t *flash_size_in_kb)
 {
 	struct target *target = bank->target;
-	uint32_t idcode, flash_size_reg;
+	uint32_t cpuid, idcode, flash_size_reg;
 
 	/* read stm32 device id register */
 	int retval = stm32x_get_device_id(bank, &idcode);
 	if (retval != ERROR_OK)
 		return retval;
+
+        /* Get the CPUID from the ARM Core
+         * http://infocenter.arm.com/help/topic/com.arm.doc.ddi0432c/DDI0432C_cortex_m0_r0p0_trm.pdf 4.2.1 */
+        retval = target_read_u32(target, 0xE000ED00, &cpuid);
+        if (retval != ERROR_OK)
+                return retval;
+	if ((cpuid & 0xfff) == 0xD20){
+		 /* 0xD20 is M23 devices, which is the GD32E23x line */
+                flash_size_reg = 0x1FFFF7E0;
+	} else {
 
 	uint16_t dev_id = idcode & 0xFFF;
 
@@ -707,16 +724,18 @@ static int stm32x_get_flash_size(struct flash_bank *bank, uint16_t *flash_size_i
 	case 0x451: /* stm32f76x/7x */
 	case 0x452: /* stm32f72x/3x */
 		flash_size_reg = 0x1FF0F442;
+		break;
 	default:
 		LOG_ERROR("Cannot identify target as a stm32fx nor a gd32x");
 		return ERROR_FAIL;
+	}
 	}
 
 	retval = target_read_u16(target, flash_size_reg, flash_size_in_kb);
 	if (retval != ERROR_OK)
 		return retval;
 
-	return retval;
+	return retval;	
 }
 
 static int stm32x_probe(struct flash_bank *bank)
@@ -748,7 +767,7 @@ static int stm32x_probe(struct flash_bank *bank)
 	LOG_INFO("rev_id = 0x%04" PRIx16 "", rev_id);
 
 	/* set page size, protection granularity and max flash size depending on family */
-	switch (device_id & 0xfff) {
+	switch (dev_id & 0xfff) {
 	case 0x440: /* stm32f05x */
 		page_size = 1024;
 		stm32x_info->ppage_size = 4;
@@ -760,7 +779,6 @@ static int stm32x_probe(struct flash_bank *bank)
 		break;
 	case 0x444: /* stm32f03x */
 	case 0x445: /* stm32f04x */
-	case 0x410: /* medium density */
 		page_size = 1024;
 		stm32x_info->ppage_size = 4;
 		max_flash_size_in_kb = 32;
